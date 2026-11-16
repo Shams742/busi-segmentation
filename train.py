@@ -1,11 +1,11 @@
-import glob, os
+import csv, glob, os
 import cv2
 import numpy as np
 import torch
 import torch.nn as nn
 import albumentations as A
 import segmentation_models_pytorch as smp
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import StratifiedGroupKFold
 from torch.utils.data import Dataset, DataLoader
 
 # ---------- Settings ----------
@@ -28,6 +28,63 @@ def get_samples():
             items.append((img, masks))
             labels.append(cls)
     return items, labels
+
+# ---------- 1b. Duplicate-aware split ----------
+def make_grouped_split(items, labels):
+    """Keep every reviewed duplicate group entirely within one data split."""
+    pairs_file = "duplicate_pairs.csv"
+    item_ids = [os.path.relpath(img, ROOT).replace("\\", "/") for img, _ in items]
+    parent = {item_id: item_id for item_id in item_ids}
+
+    def find(item_id):
+        while parent[item_id] != item_id:
+            parent[item_id] = parent[parent[item_id]]
+            item_id = parent[item_id]
+        return item_id
+
+    def union(a, b):
+        parent[find(a)] = find(b)
+
+    if not os.path.exists(pairs_file):
+        raise FileNotFoundError(f"Missing {pairs_file}; keep it beside train.py")
+
+    with open(pairs_file, newline="", encoding="utf-8-sig") as f:
+        for row in csv.DictReader(f):
+            if row.get("Decision", "").strip().lower() != "duplicate":
+                continue
+            a = row["file_a"].replace("\\", "/").strip()
+            b = row["file_b"].replace("\\", "/").strip()
+            if a not in parent or b not in parent:
+                raise ValueError(f"Duplicate pair not found in dataset: {a} | {b}")
+            union(a, b)
+
+    groups = [find(item_id) for item_id in item_ids]
+    splitter = StratifiedGroupKFold(n_splits=20, shuffle=True, random_state=SEED)
+    folds = [test_idx for _, test_idx in splitter.split(np.zeros(len(items)), labels, groups)]
+    test_idx = np.concatenate(folds[:3])
+    val_idx = np.concatenate(folds[3:6])
+    train_idx = np.concatenate(folds[6:])
+
+    split_by_index = {int(i): "train" for i in train_idx}
+    split_by_index.update({int(i): "validation" for i in val_idx})
+    split_by_index.update({int(i): "test" for i in test_idx})
+    group_splits = {}
+    for i, group in enumerate(groups):
+        group_splits.setdefault(group, set()).add(split_by_index[i])
+    if any(len(splits) != 1 for splits in group_splits.values()):
+        raise RuntimeError("A duplicate group crossed data splits")
+
+    with open("split_manifest.csv", "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["image", "split", "duplicate_group"])
+        for i, item_id in enumerate(item_ids):
+            writer.writerow([item_id, split_by_index[i], groups[i]])
+
+    tr = [items[i] for i in train_idx]
+    va = [items[i] for i in val_idx]
+    te = [items[i] for i in test_idx]
+    print(f"duplicate groups: {len(group_splits)}; manifest: split_manifest.csv")
+    return tr, va, te
 
 # ---------- 2. Dataset ----------
 class BUSI(Dataset):
@@ -77,10 +134,8 @@ if __name__ == "__main__":
     items, labels = get_samples()
     print("total images:", len(items))
 
-    # 70 / 15 / 15 stratified split
-    tr, rest, _, rest_l = train_test_split(items, labels, test_size=0.30,
-                                           stratify=labels, random_state=SEED)
-    va, te = train_test_split(rest, test_size=0.50, stratify=rest_l, random_state=SEED)
+    # Approximately 70 / 15 / 15, stratified while keeping duplicate groups together.
+    tr, va, te = make_grouped_split(items, labels)
     print("train/val/test:", len(tr), len(va), len(te))
 
     train_aug = A.Compose([A.HorizontalFlip(p=0.5),
@@ -112,8 +167,8 @@ if __name__ == "__main__":
         print(f"epoch {ep}/{EPOCHS}  loss {total/len(tl):.3f}  val dice {vd:.3f}  val iou {vi:.3f}")
         if vd > best:
             best = vd
-            torch.save(model.state_dict(), "best.pt")
+            torch.save(model.state_dict(), "best_grouped_split.pt")
 
-    model.load_state_dict(torch.load("best.pt"))
+    model.load_state_dict(torch.load("best_grouped_split.pt"))
     td, ti = evaluate(model, tel)
     print(f"TEST dice {td:.3f}  iou {ti:.3f}")

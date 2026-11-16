@@ -1,5 +1,6 @@
 Dataset_BUSI_with_GT/
-archive/
+*.zip
 *.pt
 __pycache__/
-.ipynb_checkpoints/
+day1_samples.png
+worst*.png

@@ -1,0 +1,4 @@
+image_a,image_b,split_a,split_b,review_note
+benign/benign (233).png,benign/benign (299).png,test,train,Look nearly identical; keep flagged
+benign/benign (433).png,malignant/malignant (145).png,validation,train,Look nearly identical but have different class labels
+benign/benign (235).png,benign/benign (294).png,test,test,Look very similar; verify
