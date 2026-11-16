@@ -1,0 +1,5 @@
+Dataset_BUSI_with_GT/
+archive/
+*.pt
+__pycache__/
+.ipynb_checkpoints/
