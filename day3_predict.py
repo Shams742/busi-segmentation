@@ -22,8 +22,9 @@ with torch.no_grad():
 
 rows.sort()
 print("worst 8 (dice, index, tumour_pixels):")
-for r in rows[:8]:
-    print(f"{r[0]:.3f}  {r[1]}  {int(r[2])}")
+for d, i, pixels in rows[:8]:
+    img_path, _ = ds.items[i]
+    print(f"{d:.3f} | index={i} | lesion_pixels={int(pixels)} | {img_path}")
 
 fig, ax = plt.subplots(3, 8, figsize=(24, 9))
 for k, (d, i, _) in enumerate(rows[:8]):
@@ -34,5 +35,6 @@ for k, (d, i, _) in enumerate(rows[:8]):
     ax[0, k].imshow(img); ax[0, k].set_title(f"dice {d:.2f}")
     ax[1, k].imshow(y[0], cmap="gray"); ax[2, k].imshow(p, cmap="gray")
     for r in range(3): ax[r, k].axis("off")
-plt.tight_layout(); plt.savefig("worst8.png", dpi=100)
-print("saved worst8.png")
+plt.tight_layout()
+plt.savefig("worst8_day4.png", dpi=100)
+print("saved worst8_day4.png")
